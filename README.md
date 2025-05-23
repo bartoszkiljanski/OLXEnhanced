@@ -29,7 +29,7 @@ Ten skrypt dla Tampermonkey/Greasemonkey ulepsza przeglądanie ofert wynajmu mie
 
 ## Znane Ograniczenia ⚠️
 
-*   **Dane przy Pierwszym Ładowaniu:** Dla pierwszych ofert na stronie, "Typ Sprzedawcy" i "Wiek Ogłoszenia" mogą się nie pojawić, jeśli OLX nie dostarczy tych danych w initialnym renderze. Pojawią się dla ofert ładowanych dynamicznie.
+*   **Dane przy Pierwszym Ładowaniu:** Dla pierwszych ofert na stronie, "Typ Sprzedawcy" i "Wiek Ogłoszenia" mogą się nie pojawić, jeśli OLX nie dostarczy tych danych w pierwszym renderze. Pojawią się dla ofert ładowanych dynamicznie.
 *   **Wygląd:** Dodatkowe informacje (wiek ogłoszenia, typ sprzedawcy) są dołączane do linii z ceną.
 
 ## Informacje Techniczne (dla Deweloperów / Zaawansowanych Użytkowników) 🤓
