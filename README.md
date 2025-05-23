@@ -21,7 +21,7 @@ Ten skrypt dla Tampermonkey/Greasemonkey ulepsza przeglądanie ofert wynajmu mie
 ## Instalacja 💾
 
 1.  **Zainstaluj Menedżera Skryptów:** Np. [Tampermonkey](https://www.tampermonkey.net/).
-2.  **Zainstaluj Skrypt:** Skopiuj zawartość `.userscript.js` Następnie: [Jak dodać skrypt]([https://www.tampermonkey.net](https://www.youtube.com/watch?v=8tyjJD65zws)/).
+2.  **Zainstaluj Skrypt:** Skopiuj zawartość `.userscript.js` Następnie: [Jak dodać skrypt](https://www.youtube.com/watch?v=8tyjJD65zws/).
 
 ## Jak Używać? 🧐
 
