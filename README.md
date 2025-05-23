@@ -1,5 +1,8 @@
 > ℹ️ **Nota:** Ten plik README został częściowo wygenerowany przy pomocy AI. Skrypt użytkownika powstał we współpracy z AI.
 
+
+![Podgląd działania skryptu](Preview.jpg)
+
 # OLX True Price & Enhancer 🏡💰 (Userscript)
 
 ## Wersja 1.1.0 🚀
