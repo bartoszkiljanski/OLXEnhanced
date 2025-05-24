@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         OLX True Price & Enhancer
 // @namespace    http://tampermonkey.net/
-// @version      1.3.1 // Version incremented for the refinement
-// @description  (No unsafeWindow) Shows calculated total rental prices, filters by true total price, shows listing age, seller type, and allows configuration.
+// @version      1.4.1 // Version incremented for bugfix
+// @description  (No unsafeWindow) Shows calculated total rental prices, filters by true total price and agency, shows listing age, seller type, active filter indicator, and allows configuration.
 // @author       makin (with enhancements by AI & based on original 'olx true m2 price')
 // @match        https://www.olx.pl/*
 // @icon         https://www.google.com/s2/favicons?sz=64&domain=olx.pl
@@ -15,8 +15,8 @@
     'use strict';
 
     const SCRIPT_NAME = 'OLX Enhancer';
-    const SCRIPT_VERSION = 'v1.3.1'; // Updated version
-    const SETTINGS_STORAGE_KEY = 'olxEnhancerSettings_v131'; // Updated key
+    const SCRIPT_VERSION = 'v1.4.1'; 
+    const SETTINGS_STORAGE_KEY = 'olxEnhancerSettings_v141'; // Updated key
 
     // --- DEFAULT CONFIGURATION & STRINGS ---
     const SCRIPT_DEFAULTS = {
@@ -26,7 +26,8 @@
         SHOW_LISTING_AGE: true,
         SHOW_BASE_PRICE_IN_TITLE: true,
         SHOW_SELLER_TYPE: true,
-        FILTER_BY_TRUE_TOTAL_PRICE: true,
+        FILTER_BY_TRUE_TOTAL_PRICE: true, 
+        FILTER_HIDE_AGENCIES: false, 
     };
 
     const SCRIPT_STRINGS = {
@@ -38,6 +39,12 @@
         ADDED_LABEL: "Dodano",
         SETTINGS_TITLE: `${SCRIPT_NAME} Ustawienia (${SCRIPT_VERSION})`,
         SETTINGS_TRIGGER_TEXT: `⚙️ ${SCRIPT_NAME}`,
+        FILTER_INDICATOR_AGENCY_TEXT: "agencji",
+        FILTER_INDICATOR_PRICE_TEXT: "ceny",
+        FILTER_INDICATOR_HIDDEN_TEXT: "Ukryto",
+        FILTER_INDICATOR_OFFERS_TEXT: "ofert",
+        FILTER_INDICATOR_CONJUNCTION_TEXT: "oraz",
+        FILTER_INDICATOR_BY_FILTER_TEXT: "przez filtr",
     };
 
     let currentSettings = { ...SCRIPT_DEFAULTS };
@@ -77,51 +84,77 @@
     function injectedScriptLogic() {
         // --- Start of Injected Code ---
         const INJECTED_SCRIPT_NAME = 'OLX Enhancer';
-        const INJECTED_SCRIPT_VERSION = 'v1.3.1 (Injected)'; // Match GM script version
+        const INJECTED_SCRIPT_VERSION = 'v1.4.1 (Injected)'; // Match GM script version
 
         let settings = window.__OLX_ENHANCER_SETTINGS__;
         let strings = window.__OLX_ENHANCER_STRINGS__;
+        const FILTER_INDICATOR_ID = 'olx-enhancer-filter-indicator'; // This constant is for use within injectedScriptLogic
 
-        const basePriceTitleSuffixTemplate = "(cena: {price} zł)";
-        const basePriceTitleRegex = /\s+\(cena: \d+(\.\d{1,2})? zł\)$/;
+        const basePriceTitleSuffixTemplate = "(cena bazowa: {price} zł)";
+        const basePriceTitleRegex = /\s+\(cena bazowa: \d+(\.\d{1,2})? zł\)$/;
 
         function injectedLog(...args) {
             if (settings && settings.DEBUG) {
                 console.log(`[${INJECTED_SCRIPT_NAME} ${INJECTED_SCRIPT_VERSION} - Page]`, ...args);
             }
         }
+        
+        function createOrUpdateFilterIndicatorDOM(hiddenCounts) {
+            let indicatorDiv = document.getElementById(FILTER_INDICATOR_ID);
+            if (!indicatorDiv) {
+                indicatorDiv = document.createElement('div');
+                indicatorDiv.id = FILTER_INDICATOR_ID;
+                const breadcrumbs = document.querySelector('[data-testid="breadcrumbs"]');
+                const listingGrid = document.querySelector('[data-testid="listing-grid"]');
+                if (breadcrumbs && breadcrumbs.parentNode) {
+                    breadcrumbs.parentNode.insertBefore(indicatorDiv, breadcrumbs.nextSibling);
+                } else if (listingGrid && listingGrid.parentNode) {
+                     listingGrid.parentNode.insertBefore(indicatorDiv, listingGrid);
+                } else {
+                    return; 
+                }
+            }
 
-        // --- Updated Price Range Functions ---
+            let messageParts = [];
+            if (hiddenCounts.agency > 0) {
+                messageParts.push(`${strings.FILTER_INDICATOR_HIDDEN_TEXT} ${hiddenCounts.agency} ${strings.FILTER_INDICATOR_OFFERS_TEXT} ${strings.FILTER_INDICATOR_BY_FILTER_TEXT} ${strings.FILTER_INDICATOR_AGENCY_TEXT}`);
+            }
+            if (hiddenCounts.price > 0) {
+                messageParts.push(`${strings.FILTER_INDICATOR_HIDDEN_TEXT} ${hiddenCounts.price} ${strings.FILTER_INDICATOR_OFFERS_TEXT} ${strings.FILTER_INDICATOR_BY_FILTER_TEXT} ${strings.FILTER_INDICATOR_PRICE_TEXT}`);
+            }
+
+            if (messageParts.length > 0) {
+                indicatorDiv.textContent = `${strings.SUCCESS_INDICATOR} ${messageParts.join(` ${strings.FILTER_INDICATOR_CONJUNCTION_TEXT} `)}.`;
+                indicatorDiv.style.display = 'block';
+            } else {
+                indicatorDiv.textContent = '';
+                indicatorDiv.style.display = 'none';
+            }
+        }
+
+
         function getPriceRange() {
             const fromInput = document.querySelector('input[data-testid="range-from-input"]');
             const toInput = document.querySelector('input[data-testid="range-to-input"]');
 
             const parseValue = (inputElement) => {
                 if (!inputElement || inputElement.value.trim() === "") return null;
-                // Remove spaces (e.g., "2 000") before parsing
-                const valueStr = inputElement.value.trim().replace(/\s/g, '');
+                const valueStr = inputElement.value.trim().replace(/\s/g, ''); 
                 const num = parseInt(valueStr, 10);
-                // OLX prices are non-negative. Return null if NaN or negative. 0 is valid.
-                return !isNaN(num) && num >= 0 ? num : null;
+                return !isNaN(num) && num >= 0 ? num : null; 
             };
-
-            const from = parseValue(fromInput);
-            const to = parseValue(toInput);
-
-            return { from, to };
+            return { from: parseValue(fromInput), to: parseValue(toInput) };
         }
 
         function isPriceInRange(price, from, to) {
-            if (price == null) return true; // If price couldn't be determined, don't filter it out
+            if (price == null) return true; 
             if (from != null && price < from) return false;
             if (to != null && price > to) return false;
             return true;
         }
-        // --- End Updated Price Range Functions ---
-
 
         function getCalculatedPrices(basePrice, rent) {
-            const rentValueNum = parseFloat(rent); // Use parseFloat for rent as it can be non-integer input
+            const rentValueNum = parseFloat(rent);
             if (rent == null || String(rent).trim() === '' || isNaN(rentValueNum) || rentValueNum <= 0) {
                 return { totalPrice: Math.ceil(basePrice), rentValue: 0, hasRent: false };
             }
@@ -179,32 +212,29 @@
             return `${cleanedTitle} ${suffix}`;
         }
 
-        function processOffer(offer) {
+        function processOffer(offer) { 
             const offerCategoryId = offer.category?.id?.toString();
-            const originalBasePriceValue = findParamValue(offer.params, 'price'); // Get value before numeric conversion
+            const originalBasePriceValue = findParamValue(offer.params, 'price');
             offer._originalBasePrice = typeof originalBasePriceValue === 'number' ? originalBasePriceValue : parseFloat(String(originalBasePriceValue));
 
-
             if (offerCategoryId !== settings.RENT_CATEGORY_ID) {
-                // For non-rental, true total price is its base price (if numeric)
                 offer._trueTotalPrice = typeof offer._originalBasePrice === 'number' && !isNaN(offer._originalBasePrice) ? Math.ceil(offer._originalBasePrice) : null;
                 return offer;
             }
 
             const basePriceNumeric = offer._originalBasePrice;
             if (basePriceNumeric == null || typeof basePriceNumeric !== 'number' || isNaN(basePriceNumeric)) {
-                offer._trueTotalPrice = null;
+                offer._trueTotalPrice = null; 
                 return offer;
             }
 
             const rentStr = findParamValue(offer.params, 'rent');
             const { totalPrice, hasRent } = getCalculatedPrices(basePriceNumeric, rentStr);
 
-            const newOffer = { ...offer };
-            newOffer._trueTotalPrice = totalPrice;
+            const newOffer = { ...offer }; 
+            newOffer._trueTotalPrice = totalPrice; 
 
             newOffer.title = patchOfferTitle(newOffer.title, basePriceNumeric, hasRent);
-
             newOffer.params = newOffer.params.map(param => {
                 if (param.key === 'price') {
                     return { ...param, value: { ...param.value, label: generatePriceLabel(newOffer, basePriceNumeric, rentStr) }};
@@ -216,10 +246,8 @@
 
         function processPrerenderedOffer(offer) {
             const basePriceNumeric = offer.price?.regularPrice?.value;
-            offer._originalBasePrice = basePriceNumeric; // Store original, already numeric or null
+            offer._originalBasePrice = basePriceNumeric;
 
-            // Determine if this offer should be treated as a rental for rent calculation purposes
-            // Based on page context (checked before calling this) and offer's own category if available
             const isConsideredRentalForProcessing = !offer.category?.id || offer.category.id.toString() === settings.RENT_CATEGORY_ID;
 
             if (basePriceNumeric == null || typeof basePriceNumeric !== 'number') {
@@ -230,16 +258,13 @@
             const rentStr = isConsideredRentalForProcessing ? findParamValue(offer.params, 'rent') : null;
             const { totalPrice, hasRent } = getCalculatedPrices(basePriceNumeric, rentStr);
 
-            const newOffer = { ...offer }; // Create a new object to avoid mutating original state directly before it's fully processed
-            newOffer._trueTotalPrice = totalPrice;
+            const newOffer = { ...offer }; 
+            newOffer._trueTotalPrice = totalPrice; 
 
-            // Only modify display elements (title, price label) if it's truly a rental context (checked by caller)
-            // or if it's a rental ad itself. The _trueTotalPrice is set regardless for filtering.
-            if (isConsideredRentalForProcessing) { // Apply display changes only to rentals
+            if (isConsideredRentalForProcessing) { 
                 newOffer.title = patchOfferTitle(offer.title, basePriceNumeric, hasRent);
                 newOffer.price = { ...offer.price, displayValue: generatePriceLabel(offer, basePriceNumeric, rentStr) };
             }
-
             return newOffer;
         }
 
@@ -267,10 +292,11 @@
                 try {
                     const clonedResponse = response.clone();
                     const responseBody = await clonedResponse.json();
-                    let offersArrayRef; // Reference to the array of offers in the response body structure
-                    let modifiedData = JSON.parse(JSON.stringify(responseBody)); // Deep clone
+                    let offersArrayRef; 
+                    let modifiedData = JSON.parse(JSON.stringify(responseBody)); 
                     let isListingQuery = false;
-                    let dataPathObject; // The object that holds the 'data' array of offers
+                    let dataPathObject; 
+                    let hiddenCountsForThisBatch = { price: 0, agency: 0 };
 
                     if (isGraphqlOffers && modifiedData?.data?.clientCompatibleListings?.data && Array.isArray(modifiedData.data.clientCompatibleListings.data)) {
                         const postBody = options?.body ? JSON.parse(options.body) : {};
@@ -286,45 +312,51 @@
                     }
 
                     if (isListingQuery && offersArrayRef) {
-                        // Process offers (adds _trueTotalPrice and display changes for rentals)
                         let processedOffers = offersArrayRef.map(offer => processOffer(offer));
+                        let countBeforeAgencyFilter = processedOffers.length;
 
-                        // Filter by true total price if setting is enabled
+                        if (settings.FILTER_HIDE_AGENCIES) {
+                            processedOffers = processedOffers.filter(offer => offer.business !== true); 
+                            hiddenCountsForThisBatch.agency = countBeforeAgencyFilter - processedOffers.length;
+                            if (hiddenCountsForThisBatch.agency > 0) {
+                                injectedLog(`API: Hid ${hiddenCountsForThisBatch.agency} agency offers.`);
+                            }
+                        }
+                        
+                        let countBeforePriceFilter = processedOffers.length;
                         if (settings.FILTER_BY_TRUE_TOTAL_PRICE) {
                             const { from, to } = getPriceRange();
-                            if (from !== null || to !== null) { // Only filter if range is set
-                                const originalCount = processedOffers.length;
-                                processedOffers = processedOffers.filter(offer => {
-                                    // Offer has _trueTotalPrice property set by processOffer
-                                    return isPriceInRange(offer._trueTotalPrice, from, to);
-                                });
-                                if (originalCount !== processedOffers.length) {
-                                   injectedLog(`API: Filtered by true price range [${from}-${to}]. Before: ${originalCount}, After: ${processedOffers.length}`);
+                            if (from !== null || to !== null) { 
+                                processedOffers = processedOffers.filter(offer => isPriceInRange(offer._trueTotalPrice, from, to));
+                                hiddenCountsForThisBatch.price = countBeforePriceFilter - processedOffers.length;
+                                if (hiddenCountsForThisBatch.price > 0) {
+                                   injectedLog(`API: Hid ${hiddenCountsForThisBatch.price} offers by true price range [${from}-${to}].`);
                                 }
                             }
                         }
-                        dataPathObject.data = processedOffers; // Update the data in the cloned response object
+                        dataPathObject.data = processedOffers; 
+                        createOrUpdateFilterIndicatorDOM(hiddenCountsForThisBatch);
 
-                        // Determine if this API call is for a context where we want to return our modified data
                         const isResponseContextRental = offersArrayRef.some(o => o.category?.id?.toString() === settings.RENT_CATEGORY_ID) ||
-                                                     window.location.pathname.includes('/wynajem') ||
+                                                     window.location.pathname.includes('/wynajem') || 
                                                      window.location.pathname.includes('/mieszkania/wynajem') ||
                                                      parsedUrl.searchParams.get('category_id') === settings.RENT_CATEGORY_ID;
 
-                        if (isResponseContextRental || settings.FILTER_BY_TRUE_TOTAL_PRICE) { // If filter is on, always return modified, even if not strictly rental page (e.g. homepage search)
+                        if (isResponseContextRental || settings.FILTER_BY_TRUE_TOTAL_PRICE || settings.FILTER_HIDE_AGENCIES) { 
                             injectedLog('Modified data prepared for:', requestUrl);
                             return new Response(JSON.stringify(modifiedData), {
                                 status: response.status, statusText: response.statusText, headers: response.headers
                             });
                         } else {
-                             return response; // Original response if no rental context and filter is off (or no filter criteria met)
+                             return response; 
                         }
                     } else {
-                        return response; // Original response if not a recognized offers query
+                        return response; 
                     }
                 } catch (error) {
                     injectedLog('Error processing API response:', error, 'URL:', requestUrl, 'Response status:', response.status);
-                    return response; // Return original on error
+                    createOrUpdateFilterIndicatorDOM({ price: 0, agency: 0 }); 
+                    return response; 
                 }
             };
             injectedLog('Fetch interception active (Page Context).');
@@ -334,51 +366,60 @@
             if (typeof window.__PRERENDERED_STATE__ === 'undefined' || !window.__PRERENDERED_STATE__) { return; }
             try {
                 const state = JSON.parse(window.__PRERENDERED_STATE__);
-                // Determine if we are on a page where rental processing is primary
+                let hiddenCountsForThisBatch = { price: 0, agency: 0 };
+
                 const isRentalPageContext = state?.listing?.listing?.category?.id?.toString() === settings.RENT_CATEGORY_ID ||
                                          state?.listing?.breadcrumbs?.some(b => b.category_id?.toString() === settings.RENT_CATEGORY_ID || (b.label && b.label.toLowerCase().includes('wynajem')));
 
-                if (!state.listing?.listing?.ads || !Array.isArray(state.listing.listing.ads)) { return; }
+                if (!state.listing?.listing?.ads || !Array.isArray(state.listing.listing.ads)) { 
+                    createOrUpdateFilterIndicatorDOM(hiddenCountsForThisBatch); 
+                    return; 
+                }
 
-                let processedAds = state.listing.listing.ads
-                    .map(ad => {
-                        // If on a rental page, process all ads. If an ad has a specific non-rental category, it will be handled by processPrerenderedOffer.
-                        // If not on a specific rental page (e.g. homepage), processPrerenderedOffer will still calculate _trueTotalPrice (as base price for non-rentals).
-                        return processPrerenderedOffer(ad);
-                    })
-                    .filter(Boolean); // Remove any nulls if processing failed for an ad
+                let processedAds = state.listing.listing.ads.map(ad => processPrerenderedOffer(ad)).filter(Boolean);
+                let countBeforeAgencyFilter = processedAds.length;
 
-                // Filter by true total price if setting is enabled
+                if (settings.FILTER_HIDE_AGENCIES) {
+                    processedAds = processedAds.filter(ad => ad.business !== true);
+                    hiddenCountsForThisBatch.agency = countBeforeAgencyFilter - processedAds.length;
+                     if (hiddenCountsForThisBatch.agency > 0) {
+                        injectedLog(`Prerendered: Hid ${hiddenCountsForThisBatch.agency} agency offers.`);
+                    }
+                }
+
+                let countBeforePriceFilter = processedAds.length;
                 if (settings.FILTER_BY_TRUE_TOTAL_PRICE) {
                     const { from, to } = getPriceRange();
-                    if (from !== null || to !== null) { // Only filter if range is set
-                        const originalCount = processedAds.length;
-                        processedAds = processedAds.filter(ad => {
-                            return isPriceInRange(ad._trueTotalPrice, from, to);
-                        });
-                         if (originalCount !== processedAds.length) {
-                            injectedLog(`Prerendered: Filtered by true price range [${from}-${to}]. Before: ${originalCount}, After: ${processedAds.length}`);
+                    if (from !== null || to !== null) { 
+                        processedAds = processedAds.filter(ad => isPriceInRange(ad._trueTotalPrice, from, to));
+                        hiddenCountsForThisBatch.price = countBeforePriceFilter - processedAds.length;
+                         if (hiddenCountsForThisBatch.price > 0) {
+                            injectedLog(`Prerendered: Hid ${hiddenCountsForThisBatch.price} offers by true price range [${from}-${to}].`);
                         }
                     }
                 }
 
                 state.listing.listing.ads = processedAds;
                 window.__PRERENDERED_STATE__ = JSON.stringify(state);
-
+                createOrUpdateFilterIndicatorDOM(hiddenCountsForThisBatch);
+                
                 if (isRentalPageContext) {
-                    injectedLog('__PRERENDERED_STATE__ patched for rental page context (Page Context).');
+                    injectedLog('__PRERENDERED_STATE__ patched for rental page context.');
                 } else {
-                    injectedLog('__PRERENDERED_STATE__ patched (generic page context, filtering may apply) (Page Context).');
+                    injectedLog('__PRERENDERED_STATE__ patched (generic page context, filtering may apply).');
                 }
 
-            } catch (error) { console.error(`[${INJECTED_SCRIPT_NAME} - Page] Error processing prerendered state:`, error); }
+            } catch (error) { 
+                console.error(`[${INJECTED_SCRIPT_NAME} - Page] Error processing prerendered state:`, error); 
+                createOrUpdateFilterIndicatorDOM({ price: 0, agency: 0 }); 
+            }
         }
 
         if (window.__OLX_ENHANCER_SETTINGS__ && window.__OLX_ENHANCER_STRINGS__) {
             settings = window.__OLX_ENHANCER_SETTINGS__;
             strings = window.__OLX_ENHANCER_STRINGS__;
-            patchPrerenderedState(); // Patch prerendered data first
-            interceptApiCalls();     // Then intercept API calls
+            patchPrerenderedState(); 
+            interceptApiCalls();     
             injectedLog('Script logic injected and initialized (Page Context).');
         } else {
             console.error(`[${INJECTED_SCRIPT_NAME} - Page] Settings or Strings not found on window object.`);
@@ -396,12 +437,15 @@
             <h4>${SCRIPT_STRINGS.SETTINGS_TITLE}</h4>
             <label><input type="checkbox" data-setting="DEBUG"> Tryb Debug (więcej logów w konsoli)</label>
             <label><input type="checkbox" data-setting="SHOW_RENT_IN_PRICE_LABEL"> Pokaż czynsz w cenie</label>
-            <label><input type="checkbox" data-setting="SHOW_BASE_PRICE_IN_TITLE"> Pokaż cenę bazową w tytule</label>
+            <label><input type="checkbox" data-setting="SHOW_BASE_PRICE_IN_TITLE"> Pokaż cenę bazową w tytule (gdy czynsz dodany)</label>
             <label><input type="checkbox" data-setting="SHOW_LISTING_AGE"> Pokaż wiek ogłoszenia</label>
             <label><input type="checkbox" data-setting="SHOW_SELLER_TYPE"> Pokaż typ sprzedawcy</label>
-            <label style="margin-top:10px; padding-top:5px; border-top: 1px dashed #ccc;"><input type="checkbox" data-setting="FILTER_BY_TRUE_TOTAL_PRICE"> <b>Filtruj listę wg prawdziwej ceny całkowitej (cena + czynsz)</b></label>
-            <p style="font-size:0.85em; color:#555; margin-left:20px; margin-top:-5px; margin-bottom:10px;">(Używa filtrów "Cena od/do" z OLX, ale stosuje je do sumy)</p>
-            <p style="font-size:0.9em; color:#666; margin-top:10px; margin-bottom:10px;">Zmiany stosowane są do nowo ładowanych ofert. Odśwież stronę lub użyj przycisku poniżej, aby zastosować do wszystkich.</p>
+            <div style="margin-top:10px; padding-top:5px; border-top: 1px dashed #ccc;">
+                <label><input type="checkbox" data-setting="FILTER_BY_TRUE_TOTAL_PRICE"> <b>Filtruj listę wg prawdziwej ceny całkowitej (cena + czynsz)</b></label>
+                <p style="font-size:0.85em; color:#555; margin-left:20px; margin-top:-5px; margin-bottom:5px;">(Używa filtrów "Cena od/do" z OLX, ale stosuje je do sumy)</p>
+                <label><input type="checkbox" data-setting="FILTER_HIDE_AGENCIES"> <b>Ukryj oferty od agencji nieruchomości</b></label>
+            </div>
+            <p style="font-size:0.9em; color:#666; margin-top:15px; margin-bottom:10px;">Zmiany stosowane są do nowo ładowanych ofert. Odśwież stronę lub użyj przycisku poniżej, aby zastosować do wszystkich.</p>
             <div style="margin-top:15px;">
                 <button id="${panelId}-save-refresh" style="margin-right:5px;">Zapisz i Odśwież</button>
                 <button id="${panelId}-close">Zamknij</button>
@@ -409,7 +453,7 @@
         `;
         document.body.appendChild(panel);
         GM_addStyle(`
-            #${panelId} { position: fixed; top: 80px; right: 20px; background: white; border: 1px solid #ccc; padding: 15px; z-index: 10000; box-shadow: 0 0 10px rgba(0,0,0,0.2); font-family: Arial, sans-serif; font-size: 13px; width: 330px; border-radius: 5px;}
+            #${panelId} { position: fixed; top: 80px; right: 20px; background: white; border: 1px solid #ccc; padding: 15px; z-index: 10000; box-shadow: 0 0 10px rgba(0,0,0,0.2); font-family: Arial, sans-serif; font-size: 13px; width: 350px; border-radius: 5px;}
             #${panelId} h4 { margin-top: 0; margin-bottom: 15px; font-size: 14px; color: #002f34; }
             #${panelId} label { display: block; margin-bottom: 8px; user-select:none; cursor:pointer; }
             #${panelId} input[type="checkbox"] { margin-right: 6px; vertical-align: middle; }
@@ -417,6 +461,20 @@
             #${panelId} button:hover { background-color: #005057; }
             #olx-enhancer-settings-trigger { position: fixed; top: 40px; right: 20px; background: #002f34; color: white; border: none; padding: 8px 12px; z-index: 10000; cursor: pointer; border-radius: 3px; font-size:12px; box-shadow: 0 2px 5px rgba(0,0,0,0.2); }
             #olx-enhancer-settings-trigger:hover { background-color: #005057; }
+            /* Styles for the new filter indicator */
+            #olx-enhancer-filter-indicator { /* CORRECTED: Hardcoded ID selector */
+                padding: 8px 12px;
+                background-color: #e0f2fe; /* Light blue */
+                border: 1px solid #7dd3fc; /* Blue border */
+                color: #0c5460; /* Darker blue text */
+                border-radius: 4px;
+                margin: 10px 0; 
+                font-size: 0.9em;
+                text-align: center;
+            }
+            #olx-enhancer-filter-indicator:empty, #olx-enhancer-filter-indicator[style*="display: none"] { /* CORRECTED: Hardcoded ID selector */
+                display: none !important; 
+            }
         `);
         panel.querySelectorAll('input[type="checkbox"]').forEach(checkbox => {
             const settingKey = checkbox.dataset.setting;
@@ -458,11 +516,22 @@
     }
 
     async function init() {
-        await loadSettings();
-        createSettingsPanel();
-        createSettingsTriggerButton();
-        injectCode(injectedScriptLogic, currentSettings, SCRIPT_STRINGS);
-        log(`Script UI initialized. Debug mode (GM): ${currentSettings.DEBUG ? 'ON' : 'OFF'}`);
+        try {
+            await loadSettings();
+            createSettingsPanel(); // This is where the error likely occurred
+            createSettingsTriggerButton();
+            injectCode(injectedScriptLogic, currentSettings, SCRIPT_STRINGS);
+            log(`Script UI initialized. Debug mode (GM): ${currentSettings.DEBUG ? 'ON' : 'OFF'}`);
+            log(`Filter by True Price (GM): ${currentSettings.FILTER_BY_TRUE_TOTAL_PRICE ? 'ON' : 'OFF'}`);
+            log(`Filter Hide Agencies (GM): ${currentSettings.FILTER_HIDE_AGENCIES ? 'ON' : 'OFF'}`);
+        } catch (error) {
+            console.error(`[${SCRIPT_NAME} ${SCRIPT_VERSION} - GM] Critical error during init:`, error);
+            // Optionally, display an error message to the user on the page itself if UI fails
+            const errorDiv = document.createElement('div');
+            errorDiv.style.cssText = 'position:fixed;top:10px;left:10px;background:red;color:white;padding:10px;z-index:99999;border:1px solid darkred;';
+            errorDiv.textContent = `${SCRIPT_NAME} Error: ${error.message}. Check console (F12) for details.`;
+            document.body.appendChild(errorDiv);
+        }
     }
 
     if (document.readyState === 'loading') {
