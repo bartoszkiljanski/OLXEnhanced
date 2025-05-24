@@ -82,8 +82,8 @@
         let settings = window.__OLX_ENHANCER_SETTINGS__;
         let strings = window.__OLX_ENHANCER_STRINGS__;
 
-        const basePriceTitleSuffixTemplate = "(cena bazowa: {price} zł)";
-        const basePriceTitleRegex = /\s+\(cena bazowa: \d+(\.\d{1,2})? zł\)$/;
+        const basePriceTitleSuffixTemplate = "(cena: {price} zł)";
+        const basePriceTitleRegex = /\s+\(cena: \d+(\.\d{1,2})? zł\)$/;
 
         function injectedLog(...args) {
             if (settings && settings.DEBUG) {
@@ -329,7 +329,7 @@
             <h4>${SCRIPT_STRINGS.SETTINGS_TITLE}</h4>
             <label><input type="checkbox" data-setting="DEBUG"> Tryb Debug (więcej logów w konsoli)</label>
             <label><input type="checkbox" data-setting="SHOW_RENT_IN_PRICE_LABEL"> Pokaż czynsz w cenie</label>
-            <label><input type="checkbox" data-setting="SHOW_BASE_PRICE_IN_TITLE"> Pokaż cenę bazową w tytule (gdy czynsz dodany)</label>
+            <label><input type="checkbox" data-setting="SHOW_BASE_PRICE_IN_TITLE"> Pokaż cenę bazową w tytule</label>
             <label><input type="checkbox" data-setting="SHOW_LISTING_AGE"> Pokaż wiek ogłoszenia</label>
             <label><input type="checkbox" data-setting="SHOW_SELLER_TYPE"> Pokaż typ sprzedawcy</label> 
             <p style="font-size:0.9em; color:#666; margin-top:10px; margin-bottom:10px;">Zmiany stosowane są do nowo ładowanych ofert. Odśwież stronę lub użyj przycisku poniżej, aby zastosować do wszystkich.</p>
@@ -340,7 +340,7 @@
         `;
         document.body.appendChild(panel);
         GM_addStyle(`
-            #${panelId} { position: fixed; top: 80px; right: 20px; background: white; border: 1px solid #ccc; padding: 15px; z-index: 10000; box-shadow: 0 0 10px rgba(0,0,0,0.2); font-family: Arial, sans-serif; font-size: 13px; width: 300px; border-radius: 5px;}
+            #${panelId} { position: fixed; top: 80px; right: 20px; background: white; border: 1px solid #ccc; padding: 15px; z-index: 10000; box-shadow: 0 0 10px rgba(0,0,0,0.2); font-family: Arial, sans-serif; font-size: 13px; width: 280px; border-radius: 5px;}
             #${panelId} h4 { margin-top: 0; margin-bottom: 15px; font-size: 14px; color: #002f34; }
             #${panelId} label { display: block; margin-bottom: 8px; user-select:none; cursor:pointer; }
             #${panelId} input[type="checkbox"] { margin-right: 6px; vertical-align: middle; }
