@@ -1,3 +1,5 @@
+Fork of: https://github.com/makindotcc/PrawdziwaCenaOlxPL
+
 > ℹ️ **Nota:** Ten plik README został częściowo wygenerowany przy pomocy AI. Skrypt użytkownika powstał we współpracy z AI.
 
 
