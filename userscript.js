@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         OLX True Price & Enhancer
 // @namespace    http://tampermonkey.net/
-// @version      1.2.0 // Version updated
-// @description  (No unsafeWindow) Shows calculated total rental prices, listing age, seller type, and allows configuration. Base price shown in title only when rent is added.
+// @version      1.3.1 // Version incremented for the refinement
+// @description  (No unsafeWindow) Shows calculated total rental prices, filters by true total price, shows listing age, seller type, and allows configuration.
 // @author       makin (with enhancements by AI & based on original 'olx true m2 price')
 // @match        https://www.olx.pl/*
 // @icon         https://www.google.com/s2/favicons?sz=64&domain=olx.pl
@@ -15,8 +15,8 @@
     'use strict';
 
     const SCRIPT_NAME = 'OLX Enhancer';
-    const SCRIPT_VERSION = 'v1.2.0'; // Updated version
-    const SETTINGS_STORAGE_KEY = 'olxEnhancerSettings_v120'; // Updated key if settings structure changes significantly (not in this case, but good practice)
+    const SCRIPT_VERSION = 'v1.3.1'; // Updated version
+    const SETTINGS_STORAGE_KEY = 'olxEnhancerSettings_v131'; // Updated key
 
     // --- DEFAULT CONFIGURATION & STRINGS ---
     const SCRIPT_DEFAULTS = {
@@ -24,20 +24,20 @@
         DEBUG: false,
         SHOW_RENT_IN_PRICE_LABEL: true,
         SHOW_LISTING_AGE: true,
-        SHOW_BASE_PRICE_IN_TITLE: true, // This setting's behavior is now more nuanced
+        SHOW_BASE_PRICE_IN_TITLE: true,
         SHOW_SELLER_TYPE: true,
+        FILTER_BY_TRUE_TOTAL_PRICE: true,
     };
 
     const SCRIPT_STRINGS = {
         SUCCESS_INDICATOR: "✅",
-        WARNING_INDICATOR: "⚠️", // Used when rent is missing or zero
+        WARNING_INDICATOR: "⚠️",
         PRIVATE_SELLER_TEXT: "🤵 Prywatne",
         BUSINESS_SELLER_TEXT: "🏢 Agencja",
         RENT_LABEL: "Czynsz",
         ADDED_LABEL: "Dodano",
         SETTINGS_TITLE: `${SCRIPT_NAME} Ustawienia (${SCRIPT_VERSION})`,
         SETTINGS_TRIGGER_TEXT: `⚙️ ${SCRIPT_NAME}`,
-        // No new strings needed for the title modification, it's an internal format
     };
 
     let currentSettings = { ...SCRIPT_DEFAULTS };
@@ -77,8 +77,8 @@
     function injectedScriptLogic() {
         // --- Start of Injected Code ---
         const INJECTED_SCRIPT_NAME = 'OLX Enhancer';
-        const INJECTED_SCRIPT_VERSION = 'v1.2.0 (Injected)';
-        
+        const INJECTED_SCRIPT_VERSION = 'v1.3.1 (Injected)'; // Match GM script version
+
         let settings = window.__OLX_ENHANCER_SETTINGS__;
         let strings = window.__OLX_ENHANCER_STRINGS__;
 
@@ -91,13 +91,41 @@
             }
         }
 
+        // --- Updated Price Range Functions ---
+        function getPriceRange() {
+            const fromInput = document.querySelector('input[data-testid="range-from-input"]');
+            const toInput = document.querySelector('input[data-testid="range-to-input"]');
+
+            const parseValue = (inputElement) => {
+                if (!inputElement || inputElement.value.trim() === "") return null;
+                // Remove spaces (e.g., "2 000") before parsing
+                const valueStr = inputElement.value.trim().replace(/\s/g, '');
+                const num = parseInt(valueStr, 10);
+                // OLX prices are non-negative. Return null if NaN or negative. 0 is valid.
+                return !isNaN(num) && num >= 0 ? num : null;
+            };
+
+            const from = parseValue(fromInput);
+            const to = parseValue(toInput);
+
+            return { from, to };
+        }
+
+        function isPriceInRange(price, from, to) {
+            if (price == null) return true; // If price couldn't be determined, don't filter it out
+            if (from != null && price < from) return false;
+            if (to != null && price > to) return false;
+            return true;
+        }
+        // --- End Updated Price Range Functions ---
+
+
         function getCalculatedPrices(basePrice, rent) {
-            const rentValueNum = parseFloat(rent);
+            const rentValueNum = parseFloat(rent); // Use parseFloat for rent as it can be non-integer input
             if (rent == null || String(rent).trim() === '' || isNaN(rentValueNum) || rentValueNum <= 0) {
-                return { totalPrice: basePrice, rentValue: 0, hasRent: false };
+                return { totalPrice: Math.ceil(basePrice), rentValue: 0, hasRent: false };
             }
-            // basePrice is already a number here
-            return { totalPrice: Math.ceil(basePrice + rentValueNum), rentValue: rentValueNum, hasRent: true };
+            return { totalPrice: Math.ceil(basePrice + rentValueNum), rentValue: Math.ceil(rentValueNum), hasRent: true };
         }
 
         function findParamValue(params, keyToFind) {
@@ -121,15 +149,15 @@
                 return `dzisiaj`;
             } catch (e) { injectedLog("Error parsing date for listing age:", createdTimeStr, e); return ""; }
         }
-        
-        function generatePriceLabel(offerData, basePriceNumeric, rentStr, isPrerendered = false) {
+
+        function generatePriceLabel(offerData, basePriceNumeric, rentStr) {
             const { totalPrice, rentValue, hasRent } = getCalculatedPrices(basePriceNumeric, rentStr);
             let labelParts = [];
             labelParts.push(hasRent ? strings.SUCCESS_INDICATOR : strings.WARNING_INDICATOR);
-            labelParts.push(`${Math.ceil(totalPrice)} zł`); // Ensure total price is ceiled
+            labelParts.push(`${totalPrice} zł`);
 
             if (settings.SHOW_RENT_IN_PRICE_LABEL && hasRent && rentValue > 0) {
-                labelParts.push(`(${strings.RENT_LABEL}: ${Math.ceil(rentValue)} zł)`); // Ensure rent value is ceiled
+                labelParts.push(`(${strings.RENT_LABEL}: ${rentValue} zł)`);
             }
             if (settings.SHOW_SELLER_TYPE && offerData.hasOwnProperty('business')) {
                 if (offerData.business === true) labelParts.push(`| ${strings.BUSINESS_SELLER_TEXT}`);
@@ -142,40 +170,44 @@
             return labelParts.join(" ");
         }
 
-        /**
-         * Modifies the offer title to include the base price, but only if SHOW_BASE_PRICE_IN_TITLE is true
-         * AND if rent was actually found and added (hasRentForThisOffer is true).
-         */
         function patchOfferTitle(title, basePrice, hasRentForThisOffer) {
-            // Remove any existing base price suffix first, in case of re-processing
             let cleanedTitle = title.replace(basePriceTitleRegex, '');
-
             if (!settings.SHOW_BASE_PRICE_IN_TITLE || !hasRentForThisOffer) {
-                return cleanedTitle; // Return cleaned title if setting is off or no rent was applied
+                return cleanedTitle;
             }
-            
-            const suffix = basePriceTitleSuffixTemplate.replace('{price}', Math.ceil(basePrice)); // Ceil base price for display in title
+            const suffix = basePriceTitleSuffixTemplate.replace('{price}', Math.ceil(basePrice));
             return `${cleanedTitle} ${suffix}`;
         }
 
         function processOffer(offer) {
             const offerCategoryId = offer.category?.id?.toString();
-            if (offerCategoryId !== settings.RENT_CATEGORY_ID) return offer;
-            
-            const basePriceParam = offer.params.find(p => p.key === 'price');
-            const basePriceNumeric = basePriceParam?.value?.value;
+            const originalBasePriceValue = findParamValue(offer.params, 'price'); // Get value before numeric conversion
+            offer._originalBasePrice = typeof originalBasePriceValue === 'number' ? originalBasePriceValue : parseFloat(String(originalBasePriceValue));
 
-            if (basePriceNumeric == null || typeof basePriceNumeric !== 'number') return offer;
-            
+
+            if (offerCategoryId !== settings.RENT_CATEGORY_ID) {
+                // For non-rental, true total price is its base price (if numeric)
+                offer._trueTotalPrice = typeof offer._originalBasePrice === 'number' && !isNaN(offer._originalBasePrice) ? Math.ceil(offer._originalBasePrice) : null;
+                return offer;
+            }
+
+            const basePriceNumeric = offer._originalBasePrice;
+            if (basePriceNumeric == null || typeof basePriceNumeric !== 'number' || isNaN(basePriceNumeric)) {
+                offer._trueTotalPrice = null;
+                return offer;
+            }
+
             const rentStr = findParamValue(offer.params, 'rent');
-            const { hasRent } = getCalculatedPrices(basePriceNumeric, rentStr); // Determine if rent is applicable
+            const { totalPrice, hasRent } = getCalculatedPrices(basePriceNumeric, rentStr);
 
             const newOffer = { ...offer };
-            newOffer.title = patchOfferTitle(newOffer.title, basePriceNumeric, hasRent); // Pass hasRent
+            newOffer._trueTotalPrice = totalPrice;
+
+            newOffer.title = patchOfferTitle(newOffer.title, basePriceNumeric, hasRent);
 
             newOffer.params = newOffer.params.map(param => {
                 if (param.key === 'price') {
-                    return { ...param, value: { ...param.value, label: generatePriceLabel(newOffer, basePriceNumeric, rentStr, false) }};
+                    return { ...param, value: { ...param.value, label: generatePriceLabel(newOffer, basePriceNumeric, rentStr) }};
                 }
                 return param;
             });
@@ -183,21 +215,32 @@
         }
 
         function processPrerenderedOffer(offer) {
-            // Ensure it's a rental category offer for prerendered state as well
-            // Prerendered offers might not have category.id directly, check breadcrumbs or path if necessary,
-            // but for now, we rely on patchPrerenderedState to call this only for relevant listings.
-            // The RENT_CATEGORY_ID check in patchPrerenderedState handles this.
-
             const basePriceNumeric = offer.price?.regularPrice?.value;
-            if (basePriceNumeric == null || typeof basePriceNumeric !== 'number') return offer;
-            
-            const rentStr = findParamValue(offer.params, 'rent');
-            const { hasRent } = getCalculatedPrices(basePriceNumeric, rentStr); // Determine if rent is applicable
-            
-            const newTitle = patchOfferTitle(offer.title, basePriceNumeric, hasRent); // Pass hasRent
-            const priceDisplayValue = generatePriceLabel(offer, basePriceNumeric, rentStr, true);
-            
-            return { ...offer, title: newTitle, price: { ...offer.price, displayValue: priceDisplayValue }};
+            offer._originalBasePrice = basePriceNumeric; // Store original, already numeric or null
+
+            // Determine if this offer should be treated as a rental for rent calculation purposes
+            // Based on page context (checked before calling this) and offer's own category if available
+            const isConsideredRentalForProcessing = !offer.category?.id || offer.category.id.toString() === settings.RENT_CATEGORY_ID;
+
+            if (basePriceNumeric == null || typeof basePriceNumeric !== 'number') {
+                offer._trueTotalPrice = null;
+                return offer;
+            }
+
+            const rentStr = isConsideredRentalForProcessing ? findParamValue(offer.params, 'rent') : null;
+            const { totalPrice, hasRent } = getCalculatedPrices(basePriceNumeric, rentStr);
+
+            const newOffer = { ...offer }; // Create a new object to avoid mutating original state directly before it's fully processed
+            newOffer._trueTotalPrice = totalPrice;
+
+            // Only modify display elements (title, price label) if it's truly a rental context (checked by caller)
+            // or if it's a rental ad itself. The _trueTotalPrice is set regardless for filtering.
+            if (isConsideredRentalForProcessing) { // Apply display changes only to rentals
+                newOffer.title = patchOfferTitle(offer.title, basePriceNumeric, hasRent);
+                newOffer.price = { ...offer.price, displayValue: generatePriceLabel(offer, basePriceNumeric, rentStr) };
+            }
+
+            return newOffer;
         }
 
         function interceptApiCalls() {
@@ -207,62 +250,77 @@
             window.fetch = async (resource, options, ...args) => {
                 const requestUrl = resource instanceof Request ? resource.url : resource;
                 const parsedUrl = new URL(requestUrl, window.location.origin);
-                
+
                 const isGraphqlOffers = parsedUrl.pathname.includes('/apigateway/graphql');
                 const isRestOffersApi = parsedUrl.pathname.includes('/api/v1/offers');
 
                 if (!isGraphqlOffers && !isRestOffersApi) {
                     return originalFetch.apply(window, [resource, options, ...args]);
                 }
-                
+
                 let response;
                 try { response = await originalFetch.apply(window, [resource, options, ...args]); }
                 catch (err) { injectedLog("Original fetch call failed:", err); throw err; }
-                
+
                 if (!response.ok) return response;
 
                 try {
                     const clonedResponse = response.clone();
                     const responseBody = await clonedResponse.json();
-                    let offersArray = null;
+                    let offersArrayRef; // Reference to the array of offers in the response body structure
                     let modifiedData = JSON.parse(JSON.stringify(responseBody)); // Deep clone
                     let isListingQuery = false;
+                    let dataPathObject; // The object that holds the 'data' array of offers
 
-                    if (isGraphqlOffers && responseBody?.data?.clientCompatibleListings?.data && Array.isArray(responseBody.data.clientCompatibleListings.data)) {
-                        // Check if it's a listing search query, similar to original script 1
+                    if (isGraphqlOffers && modifiedData?.data?.clientCompatibleListings?.data && Array.isArray(modifiedData.data.clientCompatibleListings.data)) {
                         const postBody = options?.body ? JSON.parse(options.body) : {};
                         if (postBody.query?.startsWith("query ListingSearchQuery")) {
                             isListingQuery = true;
-                            offersArray = responseBody.data.clientCompatibleListings.data;
-                            injectedLog('Processing GraphQL ListingSearchQuery. Offers found:', offersArray.length);
-                            modifiedData.data.clientCompatibleListings.data = offersArray.map(processOffer);
-                        } else {
-                             injectedLog('GraphQL call, but not ListingSearchQuery:', postBody.operationName || postBody.query?.substring(0,100));
+                            dataPathObject = modifiedData.data.clientCompatibleListings;
+                            offersArrayRef = dataPathObject.data;
                         }
-                    } else if (isRestOffersApi && responseBody?.data && Array.isArray(responseBody.data)) {
-                        isListingQuery = true; // Assume /api/v1/offers is always for listings
-                        offersArray = responseBody.data;
-                        injectedLog('Processing REST API. Offers found:', offersArray.length);
-                        modifiedData.data = offersArray.map(processOffer);
+                    } else if (isRestOffersApi && modifiedData?.data && Array.isArray(modifiedData.data)) {
+                        isListingQuery = true;
+                        dataPathObject = modifiedData;
+                        offersArrayRef = dataPathObject.data;
                     }
-                    
-                    if (isListingQuery && offersArray && offersArray.length > 0) {
-                        // Further check: only modify if there's at least one rental offer OR on a rental page context
-                        const isAnyOfferRental = offersArray.some(o => o.category?.id?.toString() === settings.RENT_CATEGORY_ID);
-                        const isOnRentalPagePath = window.location.pathname.includes('/wynajem') || window.location.pathname.includes('/mieszkania/wynajem');
-                        const isExplicitRentalApiCategory = parsedUrl.searchParams.get('category_id') === settings.RENT_CATEGORY_ID;
 
-                        if (isAnyOfferRental || isOnRentalPagePath || isExplicitRentalApiCategory) {
+                    if (isListingQuery && offersArrayRef) {
+                        // Process offers (adds _trueTotalPrice and display changes for rentals)
+                        let processedOffers = offersArrayRef.map(offer => processOffer(offer));
+
+                        // Filter by true total price if setting is enabled
+                        if (settings.FILTER_BY_TRUE_TOTAL_PRICE) {
+                            const { from, to } = getPriceRange();
+                            if (from !== null || to !== null) { // Only filter if range is set
+                                const originalCount = processedOffers.length;
+                                processedOffers = processedOffers.filter(offer => {
+                                    // Offer has _trueTotalPrice property set by processOffer
+                                    return isPriceInRange(offer._trueTotalPrice, from, to);
+                                });
+                                if (originalCount !== processedOffers.length) {
+                                   injectedLog(`API: Filtered by true price range [${from}-${to}]. Before: ${originalCount}, After: ${processedOffers.length}`);
+                                }
+                            }
+                        }
+                        dataPathObject.data = processedOffers; // Update the data in the cloned response object
+
+                        // Determine if this API call is for a context where we want to return our modified data
+                        const isResponseContextRental = offersArrayRef.some(o => o.category?.id?.toString() === settings.RENT_CATEGORY_ID) ||
+                                                     window.location.pathname.includes('/wynajem') ||
+                                                     window.location.pathname.includes('/mieszkania/wynajem') ||
+                                                     parsedUrl.searchParams.get('category_id') === settings.RENT_CATEGORY_ID;
+
+                        if (isResponseContextRental || settings.FILTER_BY_TRUE_TOTAL_PRICE) { // If filter is on, always return modified, even if not strictly rental page (e.g. homepage search)
                             injectedLog('Modified data prepared for:', requestUrl);
                             return new Response(JSON.stringify(modifiedData), {
                                 status: response.status, statusText: response.statusText, headers: response.headers
                             });
                         } else {
-                             injectedLog('Offers found, but not rental context for modification. Skipping for URL:', requestUrl);
-                             return response; // Return original if not relevant
+                             return response; // Original response if no rental context and filter is off (or no filter criteria met)
                         }
                     } else {
-                        return response; // Return original if no offers or not a listing query
+                        return response; // Original response if not a recognized offers query
                     }
                 } catch (error) {
                     injectedLog('Error processing API response:', error, 'URL:', requestUrl, 'Response status:', response.status);
@@ -276,42 +334,51 @@
             if (typeof window.__PRERENDERED_STATE__ === 'undefined' || !window.__PRERENDERED_STATE__) { return; }
             try {
                 const state = JSON.parse(window.__PRERENDERED_STATE__);
-                // Check if we are on a rental category page before processing ads
-                const isRentalPageByCategory = state?.listing?.listing?.category?.id?.toString() === settings.RENT_CATEGORY_ID;
-                const isRentalPageByBreadcrumb = state?.listing?.breadcrumbs?.some(b => b.category_id?.toString() === settings.RENT_CATEGORY_ID || (b.label && b.label.toLowerCase().includes('wynajem')));
+                // Determine if we are on a page where rental processing is primary
+                const isRentalPageContext = state?.listing?.listing?.category?.id?.toString() === settings.RENT_CATEGORY_ID ||
+                                         state?.listing?.breadcrumbs?.some(b => b.category_id?.toString() === settings.RENT_CATEGORY_ID || (b.label && b.label.toLowerCase().includes('wynajem')));
 
-                if (!isRentalPageByCategory && !isRentalPageByBreadcrumb) {
-                    injectedLog('__PRERENDERED_STATE__ found, but not a rental page. Skipping patch.');
-                    return;
-                }
+                if (!state.listing?.listing?.ads || !Array.isArray(state.listing.listing.ads)) { return; }
 
-                if (!state.listing?.listing?.ads || !Array.isArray(state.listing.listing.ads)) {
-                     injectedLog('__PRERENDERED_STATE__ rental page, but no ads array found.');
-                    return;
-                }
-                
-                state.listing.listing.ads = state.listing.listing.ads
+                let processedAds = state.listing.listing.ads
                     .map(ad => {
-                        // Only process ads that are likely in the rental category.
-                        // Prerendered ads don't always have a direct category.id.
-                        // We rely on the page-level check (isRentalPageByCategory/Breadcrumb).
-                        // If an ad *does* have a category and it's NOT rental, skip it.
-                        if (ad.category?.id && ad.category.id.toString() !== settings.RENT_CATEGORY_ID) {
-                            return ad;
-                        }
+                        // If on a rental page, process all ads. If an ad has a specific non-rental category, it will be handled by processPrerenderedOffer.
+                        // If not on a specific rental page (e.g. homepage), processPrerenderedOffer will still calculate _trueTotalPrice (as base price for non-rentals).
                         return processPrerenderedOffer(ad);
                     })
-                    .filter(Boolean);
+                    .filter(Boolean); // Remove any nulls if processing failed for an ad
+
+                // Filter by true total price if setting is enabled
+                if (settings.FILTER_BY_TRUE_TOTAL_PRICE) {
+                    const { from, to } = getPriceRange();
+                    if (from !== null || to !== null) { // Only filter if range is set
+                        const originalCount = processedAds.length;
+                        processedAds = processedAds.filter(ad => {
+                            return isPriceInRange(ad._trueTotalPrice, from, to);
+                        });
+                         if (originalCount !== processedAds.length) {
+                            injectedLog(`Prerendered: Filtered by true price range [${from}-${to}]. Before: ${originalCount}, After: ${processedAds.length}`);
+                        }
+                    }
+                }
+
+                state.listing.listing.ads = processedAds;
                 window.__PRERENDERED_STATE__ = JSON.stringify(state);
-                injectedLog('__PRERENDERED_STATE__ patched for rental listings (Page Context).');
+
+                if (isRentalPageContext) {
+                    injectedLog('__PRERENDERED_STATE__ patched for rental page context (Page Context).');
+                } else {
+                    injectedLog('__PRERENDERED_STATE__ patched (generic page context, filtering may apply) (Page Context).');
+                }
+
             } catch (error) { console.error(`[${INJECTED_SCRIPT_NAME} - Page] Error processing prerendered state:`, error); }
         }
-        
+
         if (window.__OLX_ENHANCER_SETTINGS__ && window.__OLX_ENHANCER_STRINGS__) {
             settings = window.__OLX_ENHANCER_SETTINGS__;
             strings = window.__OLX_ENHANCER_STRINGS__;
-            patchPrerenderedState();
-            interceptApiCalls();
+            patchPrerenderedState(); // Patch prerendered data first
+            interceptApiCalls();     // Then intercept API calls
             injectedLog('Script logic injected and initialized (Page Context).');
         } else {
             console.error(`[${INJECTED_SCRIPT_NAME} - Page] Settings or Strings not found on window object.`);
@@ -331,7 +398,9 @@
             <label><input type="checkbox" data-setting="SHOW_RENT_IN_PRICE_LABEL"> Pokaż czynsz w cenie</label>
             <label><input type="checkbox" data-setting="SHOW_BASE_PRICE_IN_TITLE"> Pokaż cenę bazową w tytule</label>
             <label><input type="checkbox" data-setting="SHOW_LISTING_AGE"> Pokaż wiek ogłoszenia</label>
-            <label><input type="checkbox" data-setting="SHOW_SELLER_TYPE"> Pokaż typ sprzedawcy</label> 
+            <label><input type="checkbox" data-setting="SHOW_SELLER_TYPE"> Pokaż typ sprzedawcy</label>
+            <label style="margin-top:10px; padding-top:5px; border-top: 1px dashed #ccc;"><input type="checkbox" data-setting="FILTER_BY_TRUE_TOTAL_PRICE"> <b>Filtruj listę wg prawdziwej ceny całkowitej (cena + czynsz)</b></label>
+            <p style="font-size:0.85em; color:#555; margin-left:20px; margin-top:-5px; margin-bottom:10px;">(Używa filtrów "Cena od/do" z OLX, ale stosuje je do sumy)</p>
             <p style="font-size:0.9em; color:#666; margin-top:10px; margin-bottom:10px;">Zmiany stosowane są do nowo ładowanych ofert. Odśwież stronę lub użyj przycisku poniżej, aby zastosować do wszystkich.</p>
             <div style="margin-top:15px;">
                 <button id="${panelId}-save-refresh" style="margin-right:5px;">Zapisz i Odśwież</button>
@@ -340,7 +409,7 @@
         `;
         document.body.appendChild(panel);
         GM_addStyle(`
-            #${panelId} { position: fixed; top: 80px; right: 20px; background: white; border: 1px solid #ccc; padding: 15px; z-index: 10000; box-shadow: 0 0 10px rgba(0,0,0,0.2); font-family: Arial, sans-serif; font-size: 13px; width: 280px; border-radius: 5px;}
+            #${panelId} { position: fixed; top: 80px; right: 20px; background: white; border: 1px solid #ccc; padding: 15px; z-index: 10000; box-shadow: 0 0 10px rgba(0,0,0,0.2); font-family: Arial, sans-serif; font-size: 13px; width: 330px; border-radius: 5px;}
             #${panelId} h4 { margin-top: 0; margin-bottom: 15px; font-size: 14px; color: #002f34; }
             #${panelId} label { display: block; margin-bottom: 8px; user-select:none; cursor:pointer; }
             #${panelId} input[type="checkbox"] { margin-right: 6px; vertical-align: middle; }
@@ -354,7 +423,7 @@
             if (currentSettings.hasOwnProperty(settingKey)) checkbox.checked = currentSettings[settingKey];
             checkbox.addEventListener('change', async () => {
                 currentSettings[settingKey] = checkbox.checked;
-                await saveSettings(); 
+                await saveSettings();
             });
         });
         document.getElementById(`${panelId}-close`).addEventListener('click', () => panel.style.display = 'none');
@@ -374,7 +443,7 @@
         });
         document.body.appendChild(button);
     }
-    
+
     function injectCode(fn, settingsData, stringsData) {
         const script = document.createElement('script');
         script.type = 'text/javascript';
@@ -389,7 +458,7 @@
     }
 
     async function init() {
-        await loadSettings(); 
+        await loadSettings();
         createSettingsPanel();
         createSettingsTriggerButton();
         injectCode(injectedScriptLogic, currentSettings, SCRIPT_STRINGS);
